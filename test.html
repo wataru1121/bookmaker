@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中綴じ面付けツール</title>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        body { font-family: "Helvetica Neue", Arial, sans-serif; background: #eef2f5; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h1 { font-size: 22px; text-align: center; color: #007bff; margin-bottom: 10px; }
+
+        .setup-area {
+            border: 2px dashed #cbd5e0; background: #f8fafc; padding: 30px;
+            text-align: center; border-radius: 8px; margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+        .setup-area.dragover { border-color: #007bff; background: #e0f0ff; }
+
+        .upload-btn { background: #007bff; color: white; padding: 10px 20px; border-radius: 5px; cursor: pointer; display: inline-block; font-weight: bold; }
+        .upload-btn:hover { background: #0056b3; }
+
+        .actions { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { flex: 1; padding: 12px; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #generateBtn { background: #28a745; color: white; }
+        #generateBtn:disabled { background: #cbd5e0; cursor: not-allowed; }
+        #downloadBtn { background: #17a2b8; color: white; display: none; }
+
+        /* Log panel */
+        .log-panel {
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+            padding: 12px 16px; margin-bottom: 16px; font-size: 12px;
+            font-family: monospace; line-height: 1.8; color: #444;
+            max-height: 160px; overflow-y: auto; display: none;
+        }
+        .log-panel.visible { display: block; }
+        .log-line { display: flex; gap: 8px; }
+        .log-line .tag { flex-shrink: 0; }
+        .log-line.ok .tag { color: #28a745; }
+        .log-line.warn .tag { color: #e6a817; }
+        .log-line.err .tag { color: #dc3545; }
+
+        /* Progress bar */
+        .progress-bar-wrap {
+            width: 100%; height: 4px; background: #e2e8f0;
+            border-radius: 4px; overflow: hidden; margin-bottom: 16px; display: none;
+        }
+        .progress-bar-wrap.visible { display: block; }
+        .progress-bar {
+            height: 100%; background: linear-gradient(90deg, #007bff, #28a745);
+            width: 0%; transition: width 0.3s ease;
+        }
+
+        /* トグルスイッチ */
+        .switch-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
+        .switch-row label.sw-label { font-weight: bold; color: #333; cursor: pointer; user-select: none; }
+        .switch-row .desc { color: #666; font-size: 12px; }
+        .toggle { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; inset: 0; background: #cbd5e0; border-radius: 26px; cursor: pointer; transition: 0.3s; }
+        .slider:before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+        input:checked + .slider { background: #007bff; }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        #previewContainer { display: none; margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px; }
+        #previewContainer h3 { font-size: 16px; margin-bottom: 6px; }
+        #pdfIframe { width: 100%; height: 500px; border: 1px solid #ccc; border-radius: 4px; display: block; }
+        #canvasContainer canvas { width: 100%; border: 1px solid #ccc; border-radius: 4px; display: block; margin-bottom: 8px; }
+        #previewNav { display: none; align-items: center; justify-content: center; gap: 12px; margin: 8px 0; font-size: 14px; }
+        #previewNav button { flex: none; padding: 6px 16px; font-size: 14px; font-weight: bold; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        #previewNav button:disabled { background: #cbd5e0; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>中綴じ面付けツール</h1>
+    <h1>「短辺とじ両面印刷」で完成</h1>
+
+    <div class="setup-area" id="dropZone">
+        <p>PDFまたは画像をドラッグ＆ドロップしてください</p>
+        <p>または</p>
+        <label class="upload-btn">
+            ファイルを選択
+            <input type="file" id="fileInput" multiple accept="application/pdf,image/jpeg,image/png" style="display:none">
+        </label>
+        <div id="fileInfo" style="margin-top:15px; font-size:14px; color:#444; font-weight:bold;"></div>
+    </div>
+
+    <div class="switch-row">
+        <label class="toggle">
+            <input type="checkbox" id="splitToggle">
+            <span class="slider"></span>
+        </label>
+        <div>
+            <label class="sw-label" for="splitToggle">見開き分割モード</label>
+            <div class="desc">横長（見開き）PDFを左右に分割してから面付けします</div>
+        </div>
+    </div>
+
+    <div class="progress-bar-wrap" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div class="log-panel" id="logPanel"></div>
+
+    <div class="actions">
+        <button id="generateBtn" disabled>プレビューを生成する</button>
+        <button id="downloadBtn">PDFをダウンロード</button>
+    </div>
+
+    <div id="previewContainer">
+        <h3>生成プレビュー</h3>
+        <p style="font-size:12px; color:#666;">問題なければ上のダウンロードボタンを押してください。</p>
+        <iframe id="pdfIframe" style="display:none"></iframe>
+        <div id="previewNav">
+            <button id="prevPageBtn" disabled>◀</button>
+            <span id="pageLabel">-</span>
+            <button id="nextPageBtn" disabled>▶</button>
+        </div>
+        <div id="canvasContainer"></div>
+    </div>
+</div>
+
+<script type = "module">
+    const { PDFDocument, degrees } = PDFLib;
+    const pdfjsLib = window['pdfjs-dist/build/pdf'];
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    // 日本語・中国語・韓国語（CIDキー付き）フォントを正しく描画するために必須のCMapデータ。
+    // これが無いと、pdf.js は該当フォントの文字を描画できず「文字が消える」現象が起きる。
+    // このツールは file:// で直接開かれることも多く、その場合ブラウザはCDNへの
+    // fetch()を（サーバー側のCORS設定に関わらず）ブロックしてしまうため、
+    // 主要なCJK用CMap（Adobe-Japan1/GB1/CNS1/Korea1-UCS2）はファイル内に同梱し、
+    // ネットワークなしで動作するようにしている。それ以外の特殊なCMapが必要な場合のみ
+    // CDNへのフェッチにフォールバックする（file://ではその場合失敗しうるが、致命的では
+    // なく、該当フォントのみ影響が出る程度に留まる）。
+    import EMBEDDED_CMAPS_B64 from './cmaps.json' with { type: 'json' };
+
+    const PDFJS_CMAP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/';
+    const PDFJS_STANDARD_FONT_DATA_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/';
+
+    function base64ToUint8Array(b64) {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+    }
+
+    // 同梱データを優先し、無ければCDNへフォールバックするCMapリーダー
+    class EmbeddedCMapReaderFactory {
+        constructor({ baseUrl = null, isCompressed = true } = {}) {
+            this.baseUrl = baseUrl;
+            this.isCompressed = isCompressed;
+        }
+        async fetch({ name }) {
+            const compressionType = this.isCompressed ? 1 /* BINARY */ : 0 /* NONE */;
+            if (EMBEDDED_CMAPS_B64[name]) {
+                return { cMapData: base64ToUint8Array(EMBEDDED_CMAPS_B64[name]), compressionType };
+            }
+            if (this.baseUrl) {
+                const url = this.baseUrl + name + (this.isCompressed ? '.bcmap' : '');
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return { cMapData: new Uint8Array(await res.arrayBuffer()), compressionType };
+            }
+            throw new Error(`Unknown CMap "${name}"`);
+        }
+    }
+
+    // 標準フォント（埋め込みされていないフォントの代替）はCDNから取得を試みる。
+    // 取得できなくても、埋め込みフォントを使うPDFではほぼ影響がない。
+    class FallbackStandardFontDataFactory {
+        constructor({ baseUrl = null } = {}) {
+            this.baseUrl = baseUrl;
+        }
+        async fetch({ filename }) {
+            if (!this.baseUrl) throw new Error('standardFontDataUrl not set');
+            const res = await fetch(this.baseUrl + filename);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return new Uint8Array(await res.arrayBuffer());
+        }
+    }
+
+    // pdf.jsでPDFを読み込む共通ヘルパー（CMap/標準フォント設定込み）
+    function loadPdfDocument(bytes) {
+        return pdfjsLib.getDocument({
+            data: new Uint8Array(bytes),
+            cMapUrl: PDFJS_CMAP_URL,
+            cMapPacked: true,
+            standardFontDataUrl: PDFJS_STANDARD_FONT_DATA_URL,
+            CMapReaderFactory: EmbeddedCMapReaderFactory,
+            StandardFontDataFactory: FallbackStandardFontDataFactory,
+            useWorkerFetch: false
+        }).promise;
+    }
+
+    const fileInput      = document.getElementById('fileInput');
+    const dropZone       = document.getElementById('dropZone');
+    const generateBtn    = document.getElementById('generateBtn');
+    const downloadBtn    = document.getElementById('downloadBtn');
+    const fileInfo       = document.getElementById('fileInfo');
+    const logPanel       = document.getElementById('logPanel');
+    const progressWrap   = document.getElementById('progressWrap');
+    const progressBar    = document.getElementById('progressBar');
+    const previewContainer = document.getElementById('previewContainer');
+    const pdfIframe      = document.getElementById('pdfIframe');
+    const canvasContainer= document.getElementById('canvasContainer');
+    const previewNav     = document.getElementById('previewNav');
+    const pageLabel      = document.getElementById('pageLabel');
+    const prevPageBtn    = document.getElementById('prevPageBtn');
+    const nextPageBtn    = document.getElementById('nextPageBtn');
+    const splitToggle    = document.getElementById('splitToggle');
+
+    let currentFiles = [];
+    let generatedPdfBlob = null;
+    let previewPdfDoc = null;
+    let currentPreviewPage = 1;
+
+    // ---- Drag & Drop ----
+    ['dragenter','dragover','dragleave','drop'].forEach(ev =>
+        dropZone.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); }));
+    dropZone.addEventListener('dragover',  () => dropZone.classList.add('dragover'));
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => { dropZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+    fileInput.addEventListener('change', () => handleFiles(fileInput.files));
+
+    function handleFiles(files) {
+        if (!files.length) return;
+        currentFiles = Array.from(files);
+        generateBtn.disabled = false;
+        fileInfo.textContent = `✅ ${currentFiles.length} 個のファイルが選択されました`;
+        clearLog();
+    }
+
+    // ---- Logging ----
+    function clearLog() { logPanel.innerHTML = ''; logPanel.classList.remove('visible'); }
+    function log(msg, type = 'info') {
+        logPanel.classList.add('visible');
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        const tags = { ok: '✓', warn: '⚠', err: '✗', info: '›' };
+        line.innerHTML = `<span class="tag">${tags[type] || '›'}</span><span>${msg}</span>`;
+        logPanel.appendChild(line);
+        logPanel.scrollTop = logPanel.scrollHeight;
+    }
+    function setProgress(pct) {
+        progressWrap.classList.add('visible');
+        progressBar.style.width = pct + '%';
+    }
+
+    // ---- Preview (iframe → canvas fallback) ----
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    async function renderCanvasPage(num) {
+        canvasContainer.innerHTML = '';
+        const page = await previewPdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        canvasContainer.appendChild(canvas);
+        pageLabel.textContent = `${num} / ${previewPdfDoc.numPages}`;
+        prevPageBtn.disabled = num <= 1;
+        nextPageBtn.disabled = num >= previewPdfDoc.numPages;
+    }
+    prevPageBtn.addEventListener('click', () => { if (currentPreviewPage > 1) renderCanvasPage(--currentPreviewPage); });
+    nextPageBtn.addEventListener('click', () => { if (previewPdfDoc && currentPreviewPage < previewPdfDoc.numPages) renderCanvasPage(++currentPreviewPage); });
+
+    async function showPreview(blobUrl, pdfBytes) {
+        if (isAndroid) {
+            // Android: blob URLをGoogleドライブビューアに渡しても開けないため
+            // canvas (pdf.js) でレンダリング
+            pdfIframe.style.display = 'none';
+            previewNav.style.display = 'flex';
+            previewPdfDoc = await loadPdfDocument(pdfBytes);
+            currentPreviewPage = 1;
+            await renderCanvasPage(1);
+        } else {
+            // PC / iOS: iframeで表示
+            pdfIframe.style.display = 'block';
+            pdfIframe.src = blobUrl;
+        }
+    }
+
+    // ---- Generate ----
+    generateBtn.addEventListener('click', async () => {
+        clearLog(); setProgress(0);
+        generateBtn.disabled = true;
+        downloadBtn.style.display = 'none';
+        previewContainer.style.display = 'none';
+        log('処理を開始します...');
+
+        try {
+            let result = await createBooklet(currentFiles);
+
+            if (result.streamError) {
+                log('エラーが発生しました: ' + result.streamError, 'err');
+                log('画像化モードで再処理します...', 'warn');
+                setProgress(0);
+                const rebuiltBytes = await rebuildAllFilesViaImages(currentFiles);
+                log('画像化完了。面付けを開始します...', 'warn');
+                const rebuiltBlob = new Blob([rebuiltBytes], { type: 'application/pdf' });
+                const rebuiltFile = new File([rebuiltBlob], 'rebuilt.pdf', { type: 'application/pdf' });
+                result = await createBooklet([rebuiltFile]);
+                if (result.streamError) throw new Error('画像化後も面付けに失敗しました: ' + result.streamError);
+                result.isRebuilt = true;
+            }
+
+            generatedPdfBlob = new Blob([result.bytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(generatedPdfBlob);
+            previewContainer.style.display = 'block';
+            downloadBtn.style.display = 'block';
+            downloadBtn.textContent = '⬇ PDFをダウンロード';
+            setProgress(100);
+            showPreview(url, result.bytes);
+            log(result.isRebuilt ? '画像化→面付けPDFの生成が完了しました！' : '面付けPDFの生成が完了しました！', 'ok');
+        } catch (e) {
+            log('エラーが発生しました: ' + e.message, 'err');
+            console.error(e);
+        } finally {
+            generateBtn.disabled = false;
+        }
+    });
+
+    downloadBtn.addEventListener('click', () => {
+        if (!generatedPdfBlob) return;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(generatedPdfBlob);
+        a.download = `booklet_${Date.now()}.pdf`;
+        a.click();
+    });
+
+    // ---- pdf-lib読み込み（スモークテスト付き） ----
+    async function tryLoadWithPdfLib(bytes) {
+        const doc = await PDFDocument.load(bytes, {
+            ignoreBadStreams: true, throwOnInvalidObject: false, updateMetadata: false
+        });
+        doc.getPages().forEach(p => p.getSize());
+        return doc;
+    }
+
+    // ---- pdf.jsでファイルを描画してA4縦正規化ページとしてintermediateDocに追加 ----
+    async function renderAndAddPages(fileBytes, intermediateDoc) {
+        const a4w = 595.28, a4h = 841.89;
+        const sourcePdf = await loadPdfDocument(fileBytes);
+        for (let i = 1; i <= sourcePdf.numPages; i++) {
+            const page = await sourcePdf.getPage(i);
+            // pdf.jsのviewportは回転込みの実効サイズを返す
+            const vp0 = page.getViewport({ scale: 1 });
+            const scale = Math.min(2.0, 1600 / Math.max(vp0.width, vp0.height));
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const jpg = await intermediateDoc.embedJpg(canvas.toDataURL('image/jpeg', 0.90));
+            const p = intermediateDoc.addPage([a4w, a4h]);
+            const d = jpg.scaleToFit(a4w, a4h);
+            p.drawImage(jpg, { x: (a4w - d.width)/2, y: (a4h - d.height)/2, width: d.width, height: d.height });
+        }
+    }
+
+    // ---- 見開きページをpdf.jsでcanvas描画→左右分割してintermediateDocに追加 ----
+    async function splitAndAddSpreadPages(fileBytes, intermediateDoc) {
+        const a4w = 595.28, a4h = 841.89;
+        const sourcePdf = await loadPdfDocument(fileBytes);
+
+        for (let i = 1; i <= sourcePdf.numPages; i++) {
+            const page = await sourcePdf.getPage(i);
+            const vp0 = page.getViewport({ scale: 1 });
+            const isSpread = vp0.width > vp0.height * 1.2;
+            const scale = Math.min(2.0, 2400 / Math.max(vp0.width, vp0.height));
+            const viewport = page.getViewport({ scale });
+
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width; canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+
+            if (isSpread) {
+                const halfW = Math.floor(canvas.width / 2);
+                for (const [sx, sw] of [[0, halfW], [halfW, canvas.width - halfW]]) {
+                    const c = document.createElement('canvas');
+                    c.width = sw; c.height = canvas.height;
+                    c.getContext('2d').drawImage(canvas, sx, 0, sw, canvas.height, 0, 0, sw, canvas.height);
+                    const jpg = await intermediateDoc.embedJpg(c.toDataURL('image/jpeg', 0.92));
+                    const p = intermediateDoc.addPage([a4w, a4h]);
+                    const d = jpg.scaleToFit(a4w, a4h);
+                    p.drawImage(jpg, { x: (a4w - d.width)/2, y: (a4h - d.height)/2, width: d.width, height: d.height });
+                }
+            } else {
+                const jpg = await intermediateDoc.embedJpg(canvas.toDataURL('image/jpeg', 0.92));
+                const p = intermediateDoc.addPage([a4w, a4h]);
+                const d = jpg.scaleToFit(a4w, a4h);
+                p.drawImage(jpg, { x: (a4w - d.width)/2, y: (a4h - d.height)/2, width: d.width, height: d.height });
+            }
+        }
+    }
+
+    // ---- メイン: 面付け処理（ストリームエラー時はstreamErrorを返す） ----
+    async function createBooklet(files) {
+        const a4w = 595.28, a4h = 841.89;
+        const doSplit = splitToggle.checked;
+
+        const sorted = [...files].sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+        const intermediateDoc = await PDFDocument.create();
+        let filesDone = 0;
+
+        for (const file of sorted) {
+            log(`読み込み中: ${file.name}`);
+            const bytes = await file.arrayBuffer();
+
+            if (file.type === 'application/pdf') {
+                if (doSplit) {
+                    // 見開き分割モード: pdf.jsでcanvas描画して分割
+                    await splitAndAddSpreadPages(bytes, intermediateDoc);
+                    log(`追加（見開き分割）: ${file.name}`, 'ok');
+                } else {
+                    try {
+                        await renderAndAddPages(bytes, intermediateDoc);
+                        log(`追加: ${file.name}`, 'ok');
+                    } catch (renderErr) {
+                        log(`スキップ: ${file.name} (${renderErr.message})`, 'err');
+                    }
+                }
+            } else {
+                const img = file.type === 'image/jpeg'
+                    ? await intermediateDoc.embedJpg(bytes)
+                    : await intermediateDoc.embedPng(bytes);
+                const page = intermediateDoc.addPage([a4w, a4h]);
+                const dims = img.scaleToFit(a4w, a4h);
+                page.drawImage(img, { x: (a4w-dims.width)/2, y: (a4h-dims.height)/2, width: dims.width, height: dims.height });
+                log(`追加: ${file.name} (画像)`, 'ok');
+            }
+
+            filesDone++;
+            setProgress(Math.round((filesDone / sorted.length) * 40));
+        }
+
+        // 4の倍数に調整
+        let totalPages = intermediateDoc.getPageCount();
+        if (totalPages === 0) throw new Error('ページがありません。');
+        while (totalPages % 4 !== 0) {
+        addBlankPageWithContent(intermediateDoc, a4w, a4h);
+        totalPages = intermediateDoc.getPageCount();
+        }
+        log(`合計 ${totalPages} ページ（空白ページ補完済）`, 'ok');
+        setProgress(50);
+
+        try {
+            const intermediateBytes = await intermediateDoc.save({ useObjectStreams: false });
+            const finalSourceDoc = await PDFDocument.load(intermediateBytes, { ignoreBadStreams: true });
+            const srcPages = finalSourceDoc.getPages();
+
+            log('面付け処理を開始...');
+            const bookletDoc = await PDFDocument.create();
+            const embeddedPages = [];
+            for (const srcPage of srcPages) {
+                const [emb] = await bookletDoc.embedPages([srcPage]);
+                embeddedPages.push(emb);
+            }
+            setProgress(70);
+
+            const sheetCount = totalPages / 4;
+            for (let i = 0; i < sheetCount; i++) {
+                const front = bookletDoc.addPage([a4w * 2, a4h]);
+                front.drawPage(embeddedPages[totalPages - 1 - i * 2], { x: 0,   y: 0, width: a4w, height: a4h });
+                front.drawPage(embeddedPages[0 + i * 2],              { x: a4w, y: 0, width: a4w, height: a4h });
+
+                const back = bookletDoc.addPage([a4w * 2, a4h]);
+                back.drawPage(embeddedPages[1 + i * 2],              { x: 0,   y: 0, width: a4w, height: a4h });
+                back.drawPage(embeddedPages[totalPages - 2 - i * 2], { x: a4w, y: 0, width: a4w, height: a4h });
+
+                setProgress(70 + Math.round(((i + 1) / sheetCount) * 28));
+            }
+
+            log('面付け完了 🎉', 'ok');
+            return { bytes: await bookletDoc.save(), isRebuilt: false };
+
+        } catch (impositionErr) {
+            return { streamError: impositionErr.message };
+        }
+    }
+
+    // ---- 全ファイルを画像化して1つのPDFに結合 ----
+    async function rebuildAllFilesViaImages(files) {
+        const a4w = 595.28, a4h = 841.89;
+        const sorted = [...files].sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { numeric: true }));
+        const newDoc = await PDFDocument.create();
+        const allBytes = [];
+        for (const file of sorted) allBytes.push(await file.arrayBuffer());
+
+        for (let fi = 0; fi < sorted.length; fi++) {
+            const file = sorted[fi];
+            const bytes = allBytes[fi];
+            if (file.type === 'application/pdf') {
+                log(`画像化中: ${file.name}`);
+                const sourcePdf = await loadPdfDocument(bytes);
+                for (let i = 1; i <= sourcePdf.numPages; i++) {
+                    const page = await sourcePdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 2.0 });
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width; canvas.height = viewport.height;
+                    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+                    const jpg = await newDoc.embedJpg(canvas.toDataURL('image/jpeg', 0.85));
+                    const p = newDoc.addPage([a4w, a4h]);
+                    const d = jpg.scaleToFit(a4w, a4h);
+                    p.drawImage(jpg, { x: (a4w-d.width)/2, y: (a4h-d.height)/2, width: d.width, height: d.height });
+                }
+                log(`画像化完了: ${file.name}`, 'ok');
+            } else {
+                const img = file.type === 'image/jpeg'
+                    ? await newDoc.embedJpg(bytes) : await newDoc.embedPng(bytes);
+                const p = newDoc.addPage([a4w, a4h]);
+                const d = img.scaleToFit(a4w, a4h);
+                p.drawImage(img, { x: (a4w-d.width)/2, y: (a4h-d.height)/2, width: d.width, height: d.height });
+                log(`追加: ${file.name} (画像)`, 'ok');
+            }
+            setProgress(Math.round(((fi + 1) / sorted.length) * 90));
+        }
+        return await newDoc.save({ useObjectStreams: false });
+    }
+
+    function addBlankPageWithContent(doc, w, h) {
+    const p = doc.addPage([w, h]);
+    p.drawRectangle({
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        opacity: 0
+    });
+    }
+</script>
+</body>
+</html>	
