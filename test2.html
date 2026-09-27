@@ -363,7 +363,7 @@
         for (const file of sorted) {
             const bytes = await file.arrayBuffer();
             if (file.type === 'application/pdf') {
-                const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const pdf = await  loadPdfDocument(fileBytes);
                 for (let i = 1; i <= pdf.numPages; i++) {
                     globalCounter++;
                     if (!excludeSet.has(globalCounter)) continue;
@@ -492,7 +492,7 @@
             const file = sorted[fi];
             if (file.type === 'application/pdf') {
                 const bytes = await file.arrayBuffer();
-                const doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const doc = await  loadPdfDocument(fileBytes);
                 browsePdfDocs[fi] = doc;
                 for (let i = 1; i <= doc.numPages; i++) {
                     globalCounter++;
@@ -676,7 +676,7 @@
             // canvas (pdf.js) でレンダリング
             pdfIframe.style.display = 'none';
             previewNav.style.display = 'flex';
-            previewPdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
+            previewPdfDoc = await loadPdfDocument(pdfBytes);
             currentPreviewPage = 1;
             await renderCanvasPage(1);
         } else {
@@ -752,7 +752,7 @@
     // ---- pdf.jsでファイルを描画してA4縦正規化ページとしてintermediateDocに追加 ----
     async function renderAndAddPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(fileBytes) }).promise;
+        const sourcePdf = await  loadPdfDocument(fileBytes);
         let excludedCount = 0;
         for (let i = 1; i <= sourcePdf.numPages; i++) {
             const globalPage = startIndex + i;
@@ -776,7 +776,7 @@
     // ---- 見開きページをpdf.jsでcanvas描画→左右分割してintermediateDocに追加 ----
     async function splitAndAddSpreadPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(fileBytes) }).promise;
+        const sourcePdf = await  loadPdfDocument(fileBytes);
         let excludedCount = 0;
 
         for (let i = 1; i <= sourcePdf.numPages; i++) {
@@ -848,7 +848,7 @@
                         log(`スキップ: ${file.name} (${renderErr.message})`, 'err');
                         // ページ番号のズレを防ぐため、可能であれば総ページ数だけカウントを進める
                         try {
-                            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                            const pdf = await  loadPdfDocument(fileBytes);
                             globalCounter += pdf.numPages;
                         } catch (_) { /* 取得できない場合は諦める */ }
                     }
@@ -932,7 +932,7 @@
             const bytes = allBytes[fi];
             if (file.type === 'application/pdf') {
                 log(`画像化中: ${file.name}`);
-                const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const sourcePdf = await  loadPdfDocument(fileBytes);
                 for (let i = 1; i <= sourcePdf.numPages; i++) {
                     globalCounter++;
                     if (excludeSet.has(globalCounter)) continue;
