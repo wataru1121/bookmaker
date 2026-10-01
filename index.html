@@ -3,7 +3,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>中綴じ面付けツール</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <style>
         body { font-family: "Helvetica Neue", Arial, sans-serif; background: #eef2f5; margin: 0; padding: 20px; color: #333; }
@@ -180,10 +180,77 @@
     </div>
 </div>
 
-<script>
+<script type = "module">
     const { PDFDocument, degrees } = PDFLib;
     const pdfjsLib = window['pdfjs-dist/build/pdf'];
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        // 日本語・中国語・韓国語（CIDキー付き）フォントを正しく描画するために必須のCMapデータ。
+    // これが無いと、pdf.js は該当フォントの文字を描画できず「文字が消える」現象が起きる。
+    // このツールは file:// で直接開かれることも多く、その場合ブラウザはCDNへの
+    // fetch()を（サーバー側のCORS設定に関わらず）ブロックしてしまうため、
+    // 主要なCJK用CMap（Adobe-Japan1/GB1/CNS1/Korea1-UCS2）はファイル内に同梱し、
+    // ネットワークなしで動作するようにしている。それ以外の特殊なCMapが必要な場合のみ
+    // CDNへのフェッチにフォールバックする（file://ではその場合失敗しうるが、致命的では
+    // なく、該当フォントのみ影響が出る程度に留まる）。
+    import EMBEDDED_CMAPS_B64 from './cmaps.json' with { type: 'json' };
+
+    const PDFJS_CMAP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/';
+    const PDFJS_STANDARD_FONT_DATA_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/';
+
+    function base64ToUint8Array(b64) {
+        const bin = atob(b64);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return arr;
+    }
+
+    // 同梱データを優先し、無ければCDNへフォールバックするCMapリーダー
+    class EmbeddedCMapReaderFactory {
+        constructor({ baseUrl = null, isCompressed = true } = {}) {
+            this.baseUrl = baseUrl;
+            this.isCompressed = isCompressed;
+        }
+        async fetch({ name }) {
+            const compressionType = this.isCompressed ? 1 /* BINARY */ : 0 /* NONE */;
+            if (EMBEDDED_CMAPS_B64[name]) {
+                return { cMapData: base64ToUint8Array(EMBEDDED_CMAPS_B64[name]), compressionType };
+            }
+            if (this.baseUrl) {
+                const url = this.baseUrl + name + (this.isCompressed ? '.bcmap' : '');
+                const res = await fetch(url);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return { cMapData: new Uint8Array(await res.arrayBuffer()), compressionType };
+            }
+            throw new Error(`Unknown CMap "${name}"`);
+        }
+    }
+
+    // 標準フォント（埋め込みされていないフォントの代替）はCDNから取得を試みる。
+    // 取得できなくても、埋め込みフォントを使うPDFではほぼ影響がない。
+    class FallbackStandardFontDataFactory {
+        constructor({ baseUrl = null } = {}) {
+            this.baseUrl = baseUrl;
+        }
+        async fetch({ filename }) {
+            if (!this.baseUrl) throw new Error('standardFontDataUrl not set');
+            const res = await fetch(this.baseUrl + filename);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return new Uint8Array(await res.arrayBuffer());
+        }
+    }
+
+    // pdf.jsでPDFを読み込む共通ヘルパー（CMap/標準フォント設定込み）
+    function loadPdfDocument(bytes) {
+        return pdfjsLib.getDocument({
+            data: new Uint8Array(bytes),
+            cMapUrl: PDFJS_CMAP_URL,
+            cMapPacked: true,
+            standardFontDataUrl: PDFJS_STANDARD_FONT_DATA_URL,
+            CMapReaderFactory: EmbeddedCMapReaderFactory,
+            StandardFontDataFactory: FallbackStandardFontDataFactory,
+            useWorkerFetch: false
+        }).promise;
+    }
 
     const fileInput      = document.getElementById('fileInput');
     const dropZone       = document.getElementById('dropZone');
@@ -296,7 +363,7 @@
         for (const file of sorted) {
             const bytes = await file.arrayBuffer();
             if (file.type === 'application/pdf') {
-                const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const pdf = await  loadPdfDocument(fileBytes);
                 for (let i = 1; i <= pdf.numPages; i++) {
                     globalCounter++;
                     if (!excludeSet.has(globalCounter)) continue;
@@ -425,7 +492,7 @@
             const file = sorted[fi];
             if (file.type === 'application/pdf') {
                 const bytes = await file.arrayBuffer();
-                const doc = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const doc = await  loadPdfDocument(fileBytes);
                 browsePdfDocs[fi] = doc;
                 for (let i = 1; i <= doc.numPages; i++) {
                     globalCounter++;
@@ -609,7 +676,7 @@
             // canvas (pdf.js) でレンダリング
             pdfIframe.style.display = 'none';
             previewNav.style.display = 'flex';
-            previewPdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
+            previewPdfDoc = await loadPdfDocument(pdfBytes);
             currentPreviewPage = 1;
             await renderCanvasPage(1);
         } else {
@@ -685,7 +752,7 @@
     // ---- pdf.jsでファイルを描画してA4縦正規化ページとしてintermediateDocに追加 ----
     async function renderAndAddPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(fileBytes) }).promise;
+        const sourcePdf = await  loadPdfDocument(fileBytes);
         let excludedCount = 0;
         for (let i = 1; i <= sourcePdf.numPages; i++) {
             const globalPage = startIndex + i;
@@ -709,7 +776,7 @@
     // ---- 見開きページをpdf.jsでcanvas描画→左右分割してintermediateDocに追加 ----
     async function splitAndAddSpreadPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(fileBytes) }).promise;
+        const sourcePdf = await  loadPdfDocument(fileBytes);
         let excludedCount = 0;
 
         for (let i = 1; i <= sourcePdf.numPages; i++) {
@@ -781,7 +848,7 @@
                         log(`スキップ: ${file.name} (${renderErr.message})`, 'err');
                         // ページ番号のズレを防ぐため、可能であれば総ページ数だけカウントを進める
                         try {
-                            const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                            const pdf = await  loadPdfDocument(fileBytes);
                             globalCounter += pdf.numPages;
                         } catch (_) { /* 取得できない場合は諦める */ }
                     }
@@ -865,7 +932,7 @@
             const bytes = allBytes[fi];
             if (file.type === 'application/pdf') {
                 log(`画像化中: ${file.name}`);
-                const sourcePdf = await pdfjsLib.getDocument({ data: new Uint8Array(bytes) }).promise;
+                const sourcePdf = await  loadPdfDocument(fileBytes);
                 for (let i = 1; i <= sourcePdf.numPages; i++) {
                     globalCounter++;
                     if (excludeSet.has(globalCounter)) continue;
