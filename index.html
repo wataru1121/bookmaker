@@ -26,7 +26,6 @@
         #generateBtn:disabled { background: #cbd5e0; cursor: not-allowed; }
         #downloadBtn { background: #17a2b8; color: white; display: none; }
 
-        /* Log panel */
         .log-panel {
             background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
             padding: 12px 16px; margin-bottom: 16px; font-size: 12px;
@@ -40,7 +39,6 @@
         .log-line.warn .tag { color: #e6a817; }
         .log-line.err .tag { color: #dc3545; }
 
-        /* Progress bar */
         .progress-bar-wrap {
             width: 100%; height: 4px; background: #e2e8f0;
             border-radius: 4px; overflow: hidden; margin-bottom: 16px; display: none;
@@ -51,7 +49,6 @@
             width: 0%; transition: width 0.3s ease;
         }
 
-        /* トグルスイッチ */
         .switch-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding: 12px 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
         .switch-row label.sw-label { font-weight: bold; color: #333; cursor: pointer; user-select: none; }
         .switch-row .desc { color: #666; font-size: 12px; }
@@ -61,6 +58,11 @@
         .slider:before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: 0.3s; }
         input:checked + .slider { background: #007bff; }
         input:checked + .slider:before { transform: translateX(20px); }
+
+        .dir-row { flex-wrap: wrap; }
+        .dir-options { display: flex; gap: 16px; }
+        .dir-options label { cursor: pointer; font-size: 14px; user-select: none; display: flex; align-items: center; gap: 6px; }
+        .dir-options input { accent-color: #007bff; width: 16px; height: 16px; }
 
         .exclude-row { flex-direction: column; align-items: stretch; }
         .exclude-row .exclude-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -126,7 +128,7 @@
         <p>または</p>
         <label class="upload-btn">
             ファイルを選択
-            <input type="file" id="fileInput" multiple="" accept="application/pdf,image/jpeg,image/png" style="display:none">
+            <input type="file" id="fileInput" multiple accept="application/pdf,image/jpeg,image/png" style="display:none">
         </label>
         <div id="fileInfo" style="margin-top:15px; font-size:14px; color:#444; font-weight:bold;"></div>
     </div>
@@ -156,6 +158,17 @@
         <div id="excludeBrowseContainer"></div>
     </div>
 
+    <div class="switch-row dir-row">
+        <div style="flex:1; min-width:220px;">
+            <span class="sw-label">綴じ方向：</span>
+            <div class="desc">冊子の開き方を選択します（選択に応じて面付けの左右配置が入れ替わります）。</div>
+        </div>
+        <div class="dir-options">
+            <label><input type="radio" name="bindDir" value="right" checked> 右開き</label>
+            <label><input type="radio" name="bindDir" value="left"> 左開き</label>
+        </div>
+    </div>
+
     <div class="progress-bar-wrap" id="progressWrap">
         <div class="progress-bar" id="progressBar"></div>
     </div>
@@ -163,7 +176,7 @@
     <div class="log-panel" id="logPanel"></div>
 
     <div class="actions">
-        <button id="generateBtn" disabled="">プレビューを生成する</button>
+        <button id="generateBtn" disabled>プレビューを生成する</button>
         <button id="downloadBtn">PDFをダウンロード</button>
     </div>
 
@@ -172,19 +185,20 @@
         <p style="font-size:12px; color:#666;">問題なければ上のダウンロードボタンを押してください。</p>
         <iframe id="pdfIframe" style="display:none"></iframe>
         <div id="previewNav">
-            <button id="prevPageBtn" disabled="">◀</button>
+            <button id="prevPageBtn" disabled>◀</button>
             <span id="pageLabel">-</span>
-            <button id="nextPageBtn" disabled="">▶</button>
+            <button id="nextPageBtn" disabled>▶</button>
         </div>
         <div id="canvasContainer"></div>
     </div>
 </div>
 
-<script type = "module">
+<script type="module">
     const { PDFDocument, degrees } = PDFLib;
     const pdfjsLib = window['pdfjs-dist/build/pdf'];
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-        // 日本語・中国語・韓国語（CIDキー付き）フォントを正しく描画するために必須のCMapデータ。
+
+    // 日本語・中国語・韓国語（CIDキー付き）フォントを正しく描画するために必須のCMapデータ。
     // これが無いと、pdf.js は該当フォントの文字を描画できず「文字が消える」現象が起きる。
     // このツールは file:// で直接開かれることも多く、その場合ブラウザはCDNへの
     // fetch()を（サーバー側のCORS設定に関わらず）ブロックしてしまうため、
@@ -279,13 +293,12 @@
     let previewPdfDoc = null;
     let currentPreviewPage = 1;
 
-    // 「全ページから選ぶ」パネル用の状態（ファイル選択が変わらない限りキャッシュを使い回す）
     let browseOpen = false;
     let browseFilesSignature = null;
-    let browsePdfDocs = [];           // fileIndex -> pdf.js document（ページ数取得・遅延レンダリング用）
-    let browsePageMeta = [];          // [{globalPage, kind, fileIndex, localPage, fileName, file}]
-    let browsePageMetaMap = new Map();// globalPage -> meta（高速参照用）
-    let browseThumbCache = new Map(); // globalPage -> 描画済みcanvas（再スクロール・再オープンで再利用）
+    let browsePdfDocs = [];
+    let browsePageMeta = [];
+    let browsePageMetaMap = new Map();
+    let browseThumbCache = new Map();
     let browseObserver = null;
 
     function resetBrowseState() {
@@ -321,7 +334,6 @@
     }
 
     // ---- 除外ページ指定のパース ----
-    // "3, 7, 12-14" のようなカンマ/スペース区切り（範囲指定も可）を数値集合に変換
     function parseExcludePages(str) {
         const set = new Set();
         if (!str) return set;
@@ -340,7 +352,6 @@
         return set;
     }
 
-    // ---- 画像ファイルをサムネイルcanvasに変換 ----
     async function imageFileToThumbCanvas(bytes, mime, maxDim = 300) {
         const blob = new Blob([bytes], { type: mime });
         const bitmap = await createImageBitmap(blob);
@@ -352,8 +363,6 @@
         return canvas;
     }
 
-    // ---- 指定された通しページ番号に該当するページのサムネイルを生成 ----
-    // ページ番号は「ソート済みファイルを結合した際の元データの通しページ番号」
     async function renderExcludePreviews(files, excludeSet) {
         const sorted = [...files].sort((a, b) =>
             a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -363,7 +372,7 @@
         for (const file of sorted) {
             const bytes = await file.arrayBuffer();
             if (file.type === 'application/pdf') {
-                const pdf = await  loadPdfDocument(fileBytes);
+                const pdf = await loadPdfDocument(bytes);
                 for (let i = 1; i <= pdf.numPages; i++) {
                     globalCounter++;
                     if (!excludeSet.has(globalCounter)) continue;
@@ -387,7 +396,6 @@
         return { results, totalPages: globalCounter };
     }
 
-    // ---- 「参照」ボタン：指定ページの実物を表示して確認 ----
     excludePreviewBtn.addEventListener('click', async () => {
         if (!currentFiles.length) { alert('先にファイルを選択してください。'); return; }
         const excludeSet = parseExcludePages(excludeInput.value);
@@ -445,7 +453,6 @@
         }
     });
 
-    // ---- 除外集合を整形して excludeInput に書き戻す（連続番号は範囲表記にまとめる） ----
     function formatExcludeSet(set) {
         const nums = [...set].sort((a, b) => a - b);
         if (nums.length === 0) return '';
@@ -466,7 +473,6 @@
         excludeInput.value = formatExcludeSet(set);
     }
 
-    // excludeInput を手で編集した場合も、開いているパネルのチェック状態に反映する
     excludeInput.addEventListener('input', () => {
         if (!browseOpen) return;
         const set = parseExcludePages(excludeInput.value);
@@ -479,7 +485,6 @@
         });
     });
 
-    // ---- 全ページ分のメタ情報（ページ数・ファイル対応）を構築。まだ描画はしない ----
     async function buildBrowseMeta(files) {
         const sorted = [...files].sort((a, b) =>
             a.name.localeCompare(b.name, undefined, { numeric: true }));
@@ -492,7 +497,7 @@
             const file = sorted[fi];
             if (file.type === 'application/pdf') {
                 const bytes = await file.arrayBuffer();
-                const doc = await  loadPdfDocument(fileBytes);
+                const doc = await loadPdfDocument(bytes);
                 browsePdfDocs[fi] = doc;
                 for (let i = 1; i <= doc.numPages; i++) {
                     globalCounter++;
@@ -509,10 +514,9 @@
         }
     }
 
-    // ---- 1ページ分のサムネイルを描画（小さめの解像度・結果はキャッシュ） ----
     async function renderBrowseThumb(meta) {
         if (browseThumbCache.has(meta.globalPage)) return browseThumbCache.get(meta.globalPage);
-        const targetW = 160; // 軽さ優先で小さめの解像度にする
+        const targetW = 160;
         let canvas;
         if (meta.kind === 'pdf') {
             const doc = browsePdfDocs[meta.fileIndex];
@@ -577,7 +581,6 @@
         return item;
     }
 
-    // ---- 「全ページから選ぶ」ボタン：横スクロールの全ページ一覧を開閉 ----
     excludeBrowseBtn.addEventListener('click', async () => {
         if (!currentFiles.length) { alert('先にファイルを選択してください。'); return; }
 
@@ -593,7 +596,6 @@
         excludeBrowseBtn.disabled = true;
 
         try {
-            // ファイルの選択内容が変わっていたらキャッシュを作り直す
             const sig = currentFiles.map(f => `${f.name}:${f.size}:${f.lastModified}`).join('|');
             if (sig !== browseFilesSignature) {
                 browseThumbCache.clear();
@@ -613,7 +615,6 @@
 
             const checkedSet = parseExcludePages(excludeInput.value);
 
-            // 画面外（横方向）のページはまだ描画せず、スクロールで近づいたときだけレンダリングする
             const observer = new IntersectionObserver((entries) => {
                 for (const entry of entries) {
                     if (!entry.isIntersecting) continue;
@@ -672,15 +673,12 @@
 
     async function showPreview(blobUrl, pdfBytes) {
         if (isAndroid) {
-            // Android: blob URLをGoogleドライブビューアに渡しても開けないため
-            // canvas (pdf.js) でレンダリング
             pdfIframe.style.display = 'none';
             previewNav.style.display = 'flex';
             previewPdfDoc = await loadPdfDocument(pdfBytes);
             currentPreviewPage = 1;
             await renderCanvasPage(1);
         } else {
-            // PC / iOS: iframeで表示
             pdfIframe.style.display = 'block';
             pdfIframe.src = blobUrl;
         }
@@ -698,6 +696,7 @@
         if (excludeSet.size > 0) {
             log(`除外ページ指定: ${[...excludeSet].sort((a, b) => a - b).join(', ')}`);
         }
+        log(`綴じ方向: ${getBindDirection() === 'left' ? '左開き' : '右開き'}`);
 
         try {
             let result = await createBooklet(currentFiles, excludeSet);
@@ -710,7 +709,6 @@
                 log('画像化完了。面付けを開始します...', 'warn');
                 const rebuiltBlob = new Blob([rebuiltBytes], { type: 'application/pdf' });
                 const rebuiltFile = new File([rebuiltBlob], 'rebuilt.pdf', { type: 'application/pdf' });
-                // 除外は画像化の時点で既に適用済みなので、ここでは再適用しない
                 result = await createBooklet([rebuiltFile], new Set());
                 if (result.streamError) throw new Error('画像化後も面付けに失敗しました: ' + result.streamError);
                 result.isRebuilt = true;
@@ -740,7 +738,12 @@
         a.click();
     });
 
-    // ---- pdf-lib読み込み（スモークテスト付き） ----
+    // ---- 綴じ方向の取得（right: 右開き / left: 左開き） ----
+    function getBindDirection() {
+        const el = document.querySelector('input[name="bindDir"]:checked');
+        return el ? el.value : 'right';
+    }
+
     async function tryLoadWithPdfLib(bytes) {
         const doc = await PDFDocument.load(bytes, {
             ignoreBadStreams: true, throwOnInvalidObject: false, updateMetadata: false
@@ -749,16 +752,14 @@
         return doc;
     }
 
-    // ---- pdf.jsでファイルを描画してA4縦正規化ページとしてintermediateDocに追加 ----
     async function renderAndAddPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await  loadPdfDocument(fileBytes);
+        const sourcePdf = await loadPdfDocument(fileBytes);
         let excludedCount = 0;
         for (let i = 1; i <= sourcePdf.numPages; i++) {
             const globalPage = startIndex + i;
             if (excludeSet.has(globalPage)) { excludedCount++; continue; }
             const page = await sourcePdf.getPage(i);
-            // pdf.jsのviewportは回転込みの実効サイズを返す
             const vp0 = page.getViewport({ scale: 1 });
             const scale = Math.min(2.0, 1600 / Math.max(vp0.width, vp0.height));
             const viewport = page.getViewport({ scale });
@@ -773,10 +774,9 @@
         return { numPages: sourcePdf.numPages, excludedCount };
     }
 
-    // ---- 見開きページをpdf.jsでcanvas描画→左右分割してintermediateDocに追加 ----
     async function splitAndAddSpreadPages(fileBytes, intermediateDoc, excludeSet = new Set(), startIndex = 0) {
         const a4w = 595.28, a4h = 841.89;
-        const sourcePdf = await  loadPdfDocument(fileBytes);
+        const sourcePdf = await loadPdfDocument(fileBytes);
         let excludedCount = 0;
 
         for (let i = 1; i <= sourcePdf.numPages; i++) {
@@ -813,17 +813,18 @@
         return { numPages: sourcePdf.numPages, excludedCount };
     }
 
-    // ---- メイン: 面付け処理（ストリームエラー時はstreamErrorを返す） ----
+    // ---- メイン: 面付け処理 ----
     async function createBooklet(files, excludeSet = new Set()) {
         const a4w = 595.28, a4h = 841.89;
         const doSplit = splitToggle.checked;
+        const leftBind = getBindDirection() === 'left';
 
         const sorted = [...files].sort((a, b) =>
             a.name.localeCompare(b.name, undefined, { numeric: true }));
 
         const intermediateDoc = await PDFDocument.create();
         let filesDone = 0;
-        let globalCounter = 0; // 元データの通しページ番号（除外ページ判定用）
+        let globalCounter = 0;
 
         for (const file of sorted) {
             log(`読み込み中: ${file.name}`);
@@ -831,7 +832,6 @@
 
             if (file.type === 'application/pdf') {
                 if (doSplit) {
-                    // 見開き分割モード: pdf.jsでcanvas描画して分割
                     const r = await splitAndAddSpreadPages(bytes, intermediateDoc, excludeSet, globalCounter);
                     globalCounter += r.numPages;
                     log(r.excludedCount > 0
@@ -846,11 +846,10 @@
                             : `追加: ${file.name}`, 'ok');
                     } catch (renderErr) {
                         log(`スキップ: ${file.name} (${renderErr.message})`, 'err');
-                        // ページ番号のズレを防ぐため、可能であれば総ページ数だけカウントを進める
                         try {
-                            const pdf = await  loadPdfDocument(fileBytes);
+                            const pdf = await loadPdfDocument(bytes);
                             globalCounter += pdf.numPages;
-                        } catch (_) { /* 取得できない場合は諦める */ }
+                        } catch (_) { }
                     }
                 }
             } else {
@@ -872,12 +871,11 @@
             setProgress(Math.round((filesDone / sorted.length) * 40));
         }
 
-        // 4の倍数に調整
         let totalPages = intermediateDoc.getPageCount();
         if (totalPages === 0) throw new Error('ページがありません（除外設定によりすべてのページが除外された可能性があります）。');
         while (totalPages % 4 !== 0) {
-        addBlankPageWithContent(intermediateDoc, a4w, a4h);
-        totalPages = intermediateDoc.getPageCount();
+            addBlankPageWithContent(intermediateDoc, a4w, a4h);
+            totalPages = intermediateDoc.getPageCount();
         }
         log(`合計 ${totalPages} ページ（空白ページ補完済）`, 'ok');
         setProgress(50);
@@ -896,15 +894,20 @@
             }
             setProgress(70);
 
+            // 右開き: 表面は 左=最終側 / 右=先頭側（従来どおり）
+            // 左開き: 左右の配置を入れ替える
+            const xL = leftBind ? a4w : 0;
+            const xR = leftBind ? 0 : a4w;
+
             const sheetCount = totalPages / 4;
             for (let i = 0; i < sheetCount; i++) {
                 const front = bookletDoc.addPage([a4w * 2, a4h]);
-                front.drawPage(embeddedPages[totalPages - 1 - i * 2], { x: 0,   y: 0, width: a4w, height: a4h });
-                front.drawPage(embeddedPages[0 + i * 2],              { x: a4w, y: 0, width: a4w, height: a4h });
+                front.drawPage(embeddedPages[totalPages - 1 - i * 2], { x: xL, y: 0, width: a4w, height: a4h });
+                front.drawPage(embeddedPages[0 + i * 2],              { x: xR, y: 0, width: a4w, height: a4h });
 
                 const back = bookletDoc.addPage([a4w * 2, a4h]);
-                back.drawPage(embeddedPages[1 + i * 2],              { x: 0,   y: 0, width: a4w, height: a4h });
-                back.drawPage(embeddedPages[totalPages - 2 - i * 2], { x: a4w, y: 0, width: a4w, height: a4h });
+                back.drawPage(embeddedPages[1 + i * 2],              { x: xL, y: 0, width: a4w, height: a4h });
+                back.drawPage(embeddedPages[totalPages - 2 - i * 2], { x: xR, y: 0, width: a4w, height: a4h });
 
                 setProgress(70 + Math.round(((i + 1) / sheetCount) * 28));
             }
@@ -917,7 +920,6 @@
         }
     }
 
-    // ---- 全ファイルを画像化して1つのPDFに結合 ----
     async function rebuildAllFilesViaImages(files, excludeSet = new Set()) {
         const a4w = 595.28, a4h = 841.89;
         const sorted = [...files].sort((a, b) =>
@@ -932,7 +934,7 @@
             const bytes = allBytes[fi];
             if (file.type === 'application/pdf') {
                 log(`画像化中: ${file.name}`);
-                const sourcePdf = await  loadPdfDocument(fileBytes);
+                const sourcePdf = await loadPdfDocument(bytes);
                 for (let i = 1; i <= sourcePdf.numPages; i++) {
                     globalCounter++;
                     if (excludeSet.has(globalCounter)) continue;
@@ -966,15 +968,9 @@
     }
 
     function addBlankPageWithContent(doc, w, h) {
-    const p = doc.addPage([w, h]);
-    p.drawRectangle({
-        x: 0,
-        y: 0,
-        width: 1,
-        height: 1,
-        opacity: 0
-    });
+        const p = doc.addPage([w, h]);
+        p.drawRectangle({ x: 0, y: 0, width: 1, height: 1, opacity: 0 });
     }
 </script>
 
-</body></html>		
+</body></html>
